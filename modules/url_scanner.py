@@ -12,6 +12,8 @@ from config import VIRUSTOTAL_API_KEY
 
 class URLScanner:
     VT_BASE = "https://www.virustotal.com/api/v3"
+    POLL_INTERVAL_SECONDS = 5
+    MAX_POLLS = 20
 
     def scan(self, url: str) -> Dict[str, Any]:
         result = {
@@ -57,8 +59,9 @@ class URLScanner:
         except Exception as exc:
             return annotate(result, ERROR, str(exc))
 
-        for _ in range(20):
-            time.sleep(5)
+        for attempt in range(self.MAX_POLLS):
+            if attempt:
+                time.sleep(self.POLL_INTERVAL_SECONDS)
             try:
                 r2 = requests.get(
                     f"{self.VT_BASE}/analyses/{analysis_id}",

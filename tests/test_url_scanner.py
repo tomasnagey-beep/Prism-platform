@@ -195,3 +195,67 @@ def test_scan_bad_json_is_handled_as_error(monkeypatch):
     assert result["status"] == "error"
     assert "not json" in result["status_reason"].lower()
     assert result["error"] == result["status_reason"]
+
+
+def _status_payload(status):
+    return {"data": {"attributes": {"status": status, "stats": {}, "categories": {}}}}
+ 
+ 
+def test_completed_analysis_returns_without_waiting(monkeypatch):
+    monkeypatch.setattr(url_scanner, "VIRUSTOTAL_API_KEY", "test-key")
+    sleeps = []
+    monkeypatch.setattr(url_scanner.time, "sleep", sleeps.append)
+    monkeypatch.setattr(
+        requests, "post",
+        lambda *a, **kw: MockResponse(payload={"data": {"id": "analysis-1"}}),
+    )
+    monkeypatch.setattr(
+        requests, "get", lambda *a, **kw: MockResponse(payload=_status_payload("completed"))
+    )
+ 
+    result = url_scanner.URLScanner().scan("https://example.com")
+ 
+    assert result["status"] == "completed"
+    assert sleeps == []
+ 
+ 
+def test_waits_only_between_polls(monkeypatch):
+    monkeypatch.setattr(url_scanner, "VIRUSTOTAL_API_KEY", "test-key")
+    sleeps = []
+    monkeypatch.setattr(url_scanner.time, "sleep", sleeps.append)
+    monkeypatch.setattr(
+        requests, "post",
+        lambda *a, **kw: MockResponse(payload={"data": {"id": "analysis-1"}}),
+    )
+    statuses = iter(["queued", "queued", "completed"])
+    monkeypatch.setattr(
+        requests, "get", lambda *a, **kw: MockResponse(payload=_status_payload(next(statuses)))
+    )
+ 
+    result = url_scanner.URLScanner().scan("https://example.com")
+ 
+    assert result["status"] == "completed"
+    assert sleeps == [url_scanner.URLScanner.POLL_INTERVAL_SECONDS] * 2
+ 
+ 
+def test_timeout_keeps_poll_budget(monkeypatch):
+    monkeypatch.setattr(url_scanner, "VIRUSTOTAL_API_KEY", "test-key")
+    sleeps, gets = [], []
+    monkeypatch.setattr(url_scanner.time, "sleep", sleeps.append)
+    monkeypatch.setattr(
+        requests, "post",
+        lambda *a, **kw: MockResponse(payload={"data": {"id": "analysis-1"}}),
+    )
+ 
+    def fake_get(*a, **kw):
+        gets.append(1)
+        return MockResponse(payload=_status_payload("queued"))
+ 
+    monkeypatch.setattr(requests, "get", fake_get)
+ 
+    result = url_scanner.URLScanner().scan("https://example.com")
+ 
+    assert result["status"] == "timeout"
+    assert len(gets) == url_scanner.URLScanner.MAX_POLLS
+    assert len(sleeps) == url_scanner.URLScanner.MAX_POLLS - 1
+ 
